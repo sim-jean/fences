@@ -37,12 +37,16 @@ For the biological module, I use :
 * a concave, power growth function where $\alpha \in ]0,1[$ :
   $$g_i(e_{it}) = e_{it}^{\alpha_i}$$
   
-* an exponential specification for outgoing dispersal with :
-  (i) symmetric efficiencies
-  (ii) symmetric baseline
-  (iii) no cross effect 
-  
-    $$d_{ijt}(f_{it}) = \exp(-f_{it})$$
+* A 2 way fence : when I fence, I keep in but I also keep out. I introduce $\beta$ as a cross productivity parameter : unless properties are next to one an other, fencing may not have a very large impact on what goes in my neighbor's patch. 
+
+\begin{equation}
+  d_{ijt}(f_{it}, f_{jt}) = \exp( - (f_{it} + \beta^i_j f_{jt}))
+\end{equation}
+
+In what follows, $\beta^A_B$ is `beta1` and $\beta^B_A$ is `beta2`
+ 
+
+
 In the economic module : 
 
 * Price is homogeneous, but marginal costs of harvesting are : 
@@ -113,12 +117,7 @@ kable(parameters)
 
 The model with two way fencing is much more difficult to solve. Now : 
 
-\begin{equation}
-  d_{ijt}(f_{it}, f_{jt}) = \exp( - (f_{it} + \beta^i_j f_{jt}))
-\end{equation}
 
-In what follows, $\beta^A_B$ is `beta1` and $\beta^B_A$ is `beta2`
- 
 
 
 ### A. Nash equilibrium in fencing
@@ -152,8 +151,6 @@ Substituting for our functional forms and for patch owner $A$:
 ### Sandboxing
 
 The idea is to find a range of solutions for these equations for various levels of $f_{1B}$ to map out the best response function. 
-
-#### Approach with modified FOC for NE
 
 ```{r, sandboxing}
 #beta1 = beta2 - (beta2/1.2)
@@ -202,124 +199,16 @@ for(step in unique(dat$f1B)){
 }
 
 storage$diff = storage$RHS - storage$LHS
-sol = storage %>%
-  subset(diff < .005 & diff > -.005)
-sol %>%
-  ggplot(aes(x = f1B, y = f1A))+
-  geom_point()+
-  theme_bw()
 
 ```
 
+I find the implicit solutions for : 
 
-```{r, one way fence}
+\begin{align}
+&\exp(-(f_{1A} + \beta^A_B f_{1B})) \left( \delta \alpha (1 - \exp(-(f_{1A} + \beta^A_j f_{jt}))) \right)^{\frac{\alpha}{1 - \alpha}} = \beta_A^B \exp(-(f_{1B}+\beta^B_A f_{1A}))\left( \delta \alpha (1 - \exp(-(f_{1B} + \beta^B_A f_{1A}))) \right)^{\frac{\alpha}{1 - \alpha}}\\
+\iff & \exp( (\beta^B_A - 1) f_{1A} + (1 - \beta^A_B) f_{1B}) = \beta_A^B \left( \frac{1 - \exp(-(f_{1A}+ \beta_B^A f_{1B}))}{1 - \exp(- (f_{1B} + \beta^B_A f_{1A}))}\right) ^{\frac{\alpha}{1 - \alpha}}
+\end{align}
 
-run_check = function(beta1, beta2, tol = .001, solution = F){
-  RHS = function(f1A, 
-               f1B){
-    y = exp( (beta1 - 1)*f1A + (1 - beta2)*f1B)
-    return(y)
-  }
-
-  LHS = function(f1A,
-                 f1B){
-    y = beta2*((1 - exp(-(f1A + beta2*f1B)))/(1 - exp(-(f1B +  beta1*f1A))))^(alpha1/(1 - alpha1))
-    return(y)
-  }
-
-
-  storage = data.frame(0,0,0,0)
-  colnames(storage) = c('f1A', 'f1B','RHS', 'LHS')
-
-  for(step in unique(dat$f1B)){
-    loc_f1A = dat %>% 
-      subset(f1B == step)%>%
-      select(f1A)%>%
-      pull()
-    loc_f1B = dat %>%
-      subset(f1B == step)%>%
-      select(f1B)%>%
-      pull()
-  
-    RHS(loc_f1A, step)
-    LHS(loc_f1A, step)
-    loc = data.frame(f1A = loc_f1A, 
-                     f1B = loc_f1B,
-                     RHS = RHS(loc_f1A, step), 
-                     LHS = LHS(loc_f1A, step))
-    storage = rbind(storage, loc)
-  }
-
-  storage$diff = storage$RHS - storage$LHS
-  storage$beta1 = beta1
-  storage$beta2 = beta2
-  if(solution == T){
-    sol = storage %>%
-    subset(diff < tol & diff > -tol)
-    sol$beta1 = beta1
-    sol$beta2 = beta2
-    return(sol)
-  }else{
-    return(storage)
-  }
-}
-
-
-betas = expand.grid(seq(0,1,by = .2), seq(0,1,by=.2))
-colnames(betas) = c('beta1', 'beta2')
-
-final = data.frame(0,0,0,0,0,0,0)
-sol_ = run_check(0,0)
-
-sol_ %>%
-  group_by(f1B)%>%
-  summarise(new_f1A = max(f1A))%>%
-  ggplot(aes(x = f1B, y = new_f1A))+
-  geom_point()
-
-
-```
-
-
-
-```{r, compared betas}
-tol = 0.01
-
-colnames(final) = colnames(sol_)
-rm(sol_)
-
-if(!(file.exists(here('outputs', 'LHS_RHS_all_betas.csv')))){
-  for(row_ in 1:nrow(betas)){
-  y = run_check(betas[row_,1], betas[row_,2], tol = .005, solution = F)
-  final = rbind(final,y )
-  }
-  write.csv(final, here('outputs', 'LHS_RHS_all_betas.csv'), row.names = F)
-}else{
-  final = read.csv(here('outputs', 'LHS_RHS_all_betas.csv'))
-}
-
-
-# Graph analysis
-
-final %>%
-  subset(diff < tol & diff > -tol)%>%
-  mutate(beta1 = as.factor(beta1))%>%
-  #filter(beta2 > .2 & beta2 <.9)%>%
-  ggplot(aes(x = f1B, y = f1A, color = beta1))+
-  geom_point(size = .8)+
-  facet_grid(~beta2)+
-  scale_colour_brewer(palette = 'Spectral')+
-  theme_minimal()
-
-```
-
-This gives a lot of food for thought. Let's think about the *best response functions*, in the case of patch owner $A$.  Take the loss of dispersal *from* $B$ *to* $A$ when increasing the fences, when patch owner $A$ fences more, she decreases the outflow from $A$ to $B$.
-
-* If $\beta^B_A = 0$ :  here, when she fences, she does not help patch owner $B$ to retain their resource. Therefore, the argument is whenever $\beta^B_A=0$, because fencing here is *costless*, $f_{1A}(f_{1B}) = \infty$. This should be reflected in the data : if $RHS>LHS$ $\forall f_{1A}, f_{1B}$, then $f_{1A} = \sup \Omega_A$ where $\Omega_A$ is the set of possible values for $f_{1A}$ (may be better not to have a closed set, could be just real numbers).
-
-
-
-#### Approach with the initial FOC for BR
 
 ```{r, allow for max}
 # Check a different approach : evaluating the condition directly
@@ -405,6 +294,9 @@ However, the heuristic argument here is quite clear :
 
 
 ```{r, multiple analysis}
+betas = expand.grid(seq(0,1,by = .2), seq(0,1,by=.2))
+colnames(betas) = c('beta1', 'beta2')
+
 ## Set up
 final2 = data.frame(0,0,0,0,0)
 colnames(final2) = c('f1A', 'f1B', 'cond', 'beta1', 'beta2')
@@ -517,7 +409,7 @@ storage_loc %>%
 Need to explore these results in a little more detail.
 
 1. Need to understand the $\beta^A_B = \beta^B_A = 1$ results. As stated before from the analytical version : *if  $\beta^A_B = \beta^B_A = 1$  then there is no solution to the first order condition, or an indeterminate solution that does not depend on $f$. That is to say the best response function is independent of the other player, and is indeterminate : you keep as much in as you lose out, e.g. when erecting a fence, you keep a resource flow (and value flow) exactly equivalent to the one you keep out. If there is no differences in growth parameters, then every combination is a best response.*
-However, here it seems like the BR function is such that when they both equal to 1, $f_{1A}(f_{1B})$ is inelastic. That might be a coding artifact : now solved
+However, here it seems like the BR function is such that when they both equal to 1, $f_{1A}(f_{1B})$ is inelastic. However, heterogeneous growth may need to be taken into account. If I know that my neighbor has a good patch, at least better then mine, then there may still be an interest in fencing, or not at all. 
 
 2. Does it make sense to have a best response when either $\beta = 1$ ?
 
