@@ -1,0 +1,530 @@
+---
+title: "2 way fencing"
+author: "Simon Jean"
+date: "2024-04-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(dplyr)
+library(kableExtra)
+library(magrittr)
+library(tidyr)
+library(ggplot2)
+library(reshape2)
+library(tinytable)
+library(igraph)
+library(scales)
+library(here)
+
+rm(list = ls())
+```
+
+## A less simple model : two way fencing
+
+### Results so far : 
+
+1. No equilibrium if 2 way fencing is really 2 way fencing. When introducing homogeneous costs, the Nash equilibrium is never to fence, unless there is a cost effect e.g. need to manage stock for costs of harvest. 
+
+2. 
+
+
+### Set up - in special case
+
+For the biological module, I use : 
+
+* a concave, power growth function where $\alpha \in ]0,1[$ :
+  $$g_i(e_{it}) = e_{it}^{\alpha_i}$$
+  
+* an exponential specification for outgoing dispersal with :
+  (i) symmetric efficiencies
+  (ii) symmetric baseline
+  (iii) no cross effect 
+  
+    $$d_{ijt}(f_{it}) = \exp(-f_{it})$$
+In the economic module : 
+
+* Price is homogeneous, but marginal costs of harvesting are : 
+  i. Linear 
+  ii. Stock independent
+  iii. Heterogeneous
+  
+  $$ MB = (p-c_i) $$
+Hence, Marginal benefit from harvesting is **always positive**.
+
+#### Parameters 
+
+```{r, parameters}
+# Initial stock
+X1 = .8
+X2 = .8
+# Growth 
+alpha1 = .8
+alpha2 = .8
+
+# Relative fencing efficiencies
+beta1 = .8
+beta2 = .8
+base = 0
+
+#Scaling for dispersal
+k = 1
+
+# Discounting
+delta = .99
+
+# Econ
+p = 30
+#cA = p - 10
+cB = p - 10
+
+# To guarantee internal solution we must have : 
+
+# (p - cB)/(p - cA) >= (delta * alpha1)/( X1^(1 - alpha1))
+# For given values here : 
+threshold = (delta * alpha1)/( X1^(1 - alpha1))
+
+cA = (cB - p)/threshold + p + 0.05
+
+# Baseline functions : 
+dispersal = function(f, 
+                     base, 
+                     k){
+  y = exp(- (base + f)/k)
+  return(y)
+}
+
+
+parameters = data.frame(initial_stockA = X1,
+                        initial_stockB = X2, 
+                        alpha_A = alpha1, 
+                        alpha_B = alpha2,
+                        beta_A = beta1, 
+                        beta_B = beta2, 
+                        k = k,
+                        delta = delta,
+                        price = p, 
+                        cA = cA, 
+                        cB = cB)
+kable(parameters)
+```
+
+
+The model with two way fencing is much more difficult to solve. Now : 
+
+\begin{equation}
+  d_{ijt}(f_{it}, f_{jt}) = \exp( - (f_{it} + \beta^i_j f_{jt}))
+\end{equation}
+
+In what follows, $\beta^A_B$ is `beta1` and $\beta^B_A$ is `beta2`
+ 
+
+
+### A. Nash equilibrium in fencing
+
+The first order condition with respect to escapement yield similar escapement formulas, which now depend on both levels of fencing : 
+
+\begin{align}
+  e_{it}^{NE}(f_{it}, f_{jt}) &\equiv g'_i(e_{it}^{NE}) = \frac{1}{\delta} \frac{1}{1 - d_{ijt}(f_{it}, f_{jt})}\\ 
+  & = \left( \delta \alpha (1 - \exp(-(f_{it} + \beta^i_j f_{jt}))) \right)^{\frac{\alpha}{1 - \alpha}}
+\end{align}
+
+First order conditions for fencing yield : 
+
+\begin{align}
+& - \frac{\partial d_{ijt}}{\partial f_{it}} g_i(e_{it}^{NE}) + \frac{\partial d_{jit}}{\partial f_{it}}g_j(e_{jt}^{NE}) \geq 0\\
+& \left| \frac{\partial d_{ijt}}{\partial f_{it}} g_i(e_{it}^{NE}) \right| \geq \left| \frac{\partial d_{jit}}{\partial f_{it}}g_j(e_{jt}^{NE}) \right|
+\end{align}
+
+This result is simple : fencing for $A$ is beneficial as long as the retained flow of the resource (LHS) is larger than the lost inflow of the resource from $B$ because of increased fencing. This is  non trivial, because (i) when fencing is increased, escapement reduces (solving the spatial externality improves management) and (ii) when fencing is increased, dispersal *rate* is decreased. It is not clear which effect dominates in this interplay.
+
+
+Substituting for our functional forms and for patch owner $A$: 
+
+\begin{align}
+&\exp(-(f_{1A} + \beta^A_B f_{1B})) \left( \delta \alpha (1 - \exp(-(f_{1A} + \beta^A_j f_{jt}))) \right)^{\frac{\alpha}{1 - \alpha}} = \beta_A^B \exp(-(f_{1B}+\beta^B_A f_{1A}))\left( \delta \alpha (1 - \exp(-(f_{1B} + \beta^B_A f_{1A}))) \right)^{\frac{\alpha}{1 - \alpha}}\\
+\iff & \exp( (\beta^B_A - 1) f_{1A} + (1 - \beta^A_B) f_{1B}) = \beta_A^B \left( \frac{1 - \exp(-(f_{1A}+ \beta_B^A f_{1B}))}{1 - \exp(- (f_{1B} + \beta^B_A f_{1A}))}\right) ^{\frac{\alpha}{1 - \alpha}}
+\end{align}
+
+**Result 1** : if $\beta^A_B = \beta^B_A = 1$, then there is no solution to the first order condition, or an indeterminate solution that does not depend on $f$. That is to say the best response function is independent of the other player, and is indeterminate : you keep as much in as you lose out, e.g. when erecting a fence, you keep a resource flow (and value flow) exactly equivalent to the one you keep out. If there is no differences in growth parameters, then every combination is a best response. 
+
+### Sandboxing
+
+The idea is to find a range of solutions for these equations for various levels of $f_{1B}$ to map out the best response function. 
+
+#### Approach with modified FOC for NE
+
+```{r, sandboxing}
+#beta1 = beta2 - (beta2/1.2)
+
+
+f1B = seq(0,7, by = .02)
+dat = expand.grid(f1B, f1B)
+colnames(dat) = c('f1A', 'f1B')
+
+# Unique run 
+
+RHS = function(f1A, 
+               f1B){
+  y = exp( (beta2 - 1)*f1A + (1 - beta1)*f1B)
+  return(y)
+}
+
+LHS = function(f1A,
+               f1B){
+  y = beta2*((1 - exp(-(f1A + beta1*f1B)))/(1 - exp(-(f1B +  beta2*f1A))))^(alpha1/(1 - alpha1))
+  return(y)
+}
+
+
+storage = data.frame(0,0,0,0)
+colnames(storage) = c('f1A', 'f1B','RHS', 'LHS')
+
+for(step in unique(dat$f1B)){
+  loc_f1A = dat %>% 
+    subset(f1B == step)%>%
+    select(f1A)%>%
+    pull()
+  loc_f1B = dat %>%
+    subset(f1B == step)%>%
+    select(f1B)%>%
+    pull()
+  
+  RHS(loc_f1A, step)
+  LHS(loc_f1A, step)
+  loc = data.frame(f1A = loc_f1A, 
+                   f1B = loc_f1B,
+                   RHS = RHS(loc_f1A, step), 
+                   LHS = LHS(loc_f1A, step))
+  storage = rbind(storage, loc)
+  
+}
+
+storage$diff = storage$RHS - storage$LHS
+sol = storage %>%
+  subset(diff < .005 & diff > -.005)
+sol %>%
+  ggplot(aes(x = f1B, y = f1A))+
+  geom_point()+
+  theme_bw()
+
+```
+
+
+```{r, one way fence}
+
+run_check = function(beta1, beta2, tol = .001, solution = F){
+  RHS = function(f1A, 
+               f1B){
+    y = exp( (beta1 - 1)*f1A + (1 - beta2)*f1B)
+    return(y)
+  }
+
+  LHS = function(f1A,
+                 f1B){
+    y = beta2*((1 - exp(-(f1A + beta2*f1B)))/(1 - exp(-(f1B +  beta1*f1A))))^(alpha1/(1 - alpha1))
+    return(y)
+  }
+
+
+  storage = data.frame(0,0,0,0)
+  colnames(storage) = c('f1A', 'f1B','RHS', 'LHS')
+
+  for(step in unique(dat$f1B)){
+    loc_f1A = dat %>% 
+      subset(f1B == step)%>%
+      select(f1A)%>%
+      pull()
+    loc_f1B = dat %>%
+      subset(f1B == step)%>%
+      select(f1B)%>%
+      pull()
+  
+    RHS(loc_f1A, step)
+    LHS(loc_f1A, step)
+    loc = data.frame(f1A = loc_f1A, 
+                     f1B = loc_f1B,
+                     RHS = RHS(loc_f1A, step), 
+                     LHS = LHS(loc_f1A, step))
+    storage = rbind(storage, loc)
+  }
+
+  storage$diff = storage$RHS - storage$LHS
+  storage$beta1 = beta1
+  storage$beta2 = beta2
+  if(solution == T){
+    sol = storage %>%
+    subset(diff < tol & diff > -tol)
+    sol$beta1 = beta1
+    sol$beta2 = beta2
+    return(sol)
+  }else{
+    return(storage)
+  }
+}
+
+
+betas = expand.grid(seq(0,1,by = .2), seq(0,1,by=.2))
+colnames(betas) = c('beta1', 'beta2')
+
+final = data.frame(0,0,0,0,0,0,0)
+sol_ = run_check(0,0)
+
+sol_ %>%
+  group_by(f1B)%>%
+  summarise(new_f1A = max(f1A))%>%
+  ggplot(aes(x = f1B, y = new_f1A))+
+  geom_point()
+
+
+```
+
+
+
+```{r, compared betas}
+tol = 0.01
+
+colnames(final) = colnames(sol_)
+rm(sol_)
+
+if(!(file.exists(here('code_outputs', 'LHS_RHS_all_betas.csv')))){
+  for(row_ in 1:nrow(betas)){
+  y = run_check(betas[row_,1], betas[row_,2], tol = .005, solution = F)
+  final = rbind(final,y )
+  }
+  write.csv(final, here('code_outputs', 'LHS_RHS_all_betas.csv'), row.names = F)
+}else{
+  final = read.csv(here('code_outputs', 'LHS_RHS_all_betas.csv'))
+}
+
+
+# Graph analysis
+
+final %>%
+  subset(diff < tol & diff > -tol)%>%
+  mutate(beta1 = as.factor(beta1))%>%
+  #filter(beta2 > .2 & beta2 <.9)%>%
+  ggplot(aes(x = f1B, y = f1A, color = beta1))+
+  geom_point(size = .8)+
+  facet_grid(~beta2)+
+  scale_colour_brewer(palette = 'Spectral')+
+  theme_minimal()
+
+```
+
+This gives a lot of food for thought. Let's think about the *best response functions*, in the case of patch owner $A$.  Take the loss of dispersal *from* $B$ *to* $A$ when increasing the fences, when patch owner $A$ fences more, she decreases the outflow from $A$ to $B$.
+
+* If $\beta^B_A = 0$ :  here, when she fences, she does not help patch owner $B$ to retain their resource. Therefore, the argument is whenever $\beta^B_A=0$, because fencing here is *costless*, $f_{1A}(f_{1B}) = \infty$. This should be reflected in the data : if $RHS>LHS$ $\forall f_{1A}, f_{1B}$, then $f_{1A} = \sup \Omega_A$ where $\Omega_A$ is the set of possible values for $f_{1A}$ (may be better not to have a closed set, could be just real numbers).
+
+
+
+#### Approach with the initial FOC for BR
+
+```{r, allow for max}
+# Check a different approach : evaluating the condition directly
+run_check2 = function(beta1, beta2, tol = .01, solution = F){
+  
+  eval_cond_A = function(f1A, f1B){
+    y =  exp(-(f1A + beta1*f1B)) * (delta * alpha1 * (1 - exp(-(f1A + beta1*f1B))))^(alpha1/(1 - alpha1)) - beta2 * exp( - (f1B + beta2*f1A))*(delta * alpha1 * (1 - exp(-(f1B + beta2*f1A))))^(alpha1/(1- alpha1))
+    return(y * delta * (p - cA))
+  }
+  
+  storage = data.frame(0,0,0)
+  colnames(storage) = c('f1A', 'f1B','cond')
+
+  for(step in unique(dat$f1B)){
+    loc_f1A = dat %>% 
+      subset(f1B == step)%>%
+      select(f1A)%>%
+      pull()
+    loc_f1B = dat %>%
+      subset(f1B == step)%>%
+      select(f1B)%>%
+      pull()
+
+    loc = data.frame(f1A = loc_f1A, 
+                     f1B = loc_f1B,
+                     cond = eval_cond_A(loc_f1A, loc_f1B))
+    storage = rbind(storage, loc)
+  }
+
+  storage$beta1 = beta1
+  storage$beta2 = beta2
+  
+  if(solution == T){
+    sol = storage %>%
+    subset(diff < tol & diff > -tol)
+    sol$beta1 = beta1
+    sol$beta2 = beta2
+    return(sol)
+  }else{
+    return(storage)
+  }
+}
+
+# Set up local analysis
+beta1_here = .2
+beta2_here = .4
+
+a = run_check2(beta1_here,beta2_here)
+#a = run_check2(0.8,1)
+a = a %>%
+  mutate(sign = sign(cond))%>%
+  mutate(sign_change = sign(cond) + lag(sign(cond)))
+
+# Graphical analysis:
+a %>%
+  subset(f1B %in% seq(0,4, by = 1))%>%
+  mutate(f1B = as.factor(f1B))%>%
+  ggplot(aes(x = f1A, y = cond, color = f1B))+
+  geom_line(linewidth = 1.1)+
+  geom_hline(yintercept = 0, linetype = 'dotted')+
+  ggtitle(paste0('FOC for $f_{1A}(f_{1B})$ with beta1 = ', beta1_here, ' and beta2 = ', beta2_here))+
+  scale_color_brewer(palette = 'Spectral')+
+  theme_minimal()
+  
+```
+
+
+This is interesting. At first, the *marginal welfare from increasing fencing is negative* when $f_{1B}$ is positive but below 3. 
+
+It is increasing, then decreasing, but positive, and becomes negative. This yields to two crossing points, close to 0 and then higher. 
+However, the heuristic argument here is quite clear :
+
+* At low crossing points, welfare is not maximized, because the integral of the FOC between 0 and the first crossing point is accounted as negative. 
+
+* Between the low and high crossing points, the integral is positive, because the marginal welfare is positive. 
+
+* The welfare maximizing best response function should thus be the high crossing point; 
+
+**Question** : do I need an integral argument or can it be a "simple" derivative argument like " *marginal welfare is negative but increasing, becomes positive and then becomes negative again* "?
+
+
+
+
+
+```{r, multiple analysis}
+## Set up
+final2 = data.frame(0,0,0,0,0)
+colnames(final2) = c('f1A', 'f1B', 'cond', 'beta1', 'beta2')
+rm(a)
+
+# This loops the computation of the first order condition that defines the best response function of f1A(f1B), according to the first formulation, over different potential cross partial derivatives of dispersal (e.g. 2 way fencing).
+
+if(!(file.exists(here('code_outputs', 'Nash_FOC_all_betas.csv')))){
+  print('tamr')
+  for(row_ in 1:nrow(betas)){
+    y = run_check2(betas[row_,1], betas[row_,2], tol = .005, solution = F)
+    final2 = rbind(final2, y )
+  }
+  write.csv(final2, here('code_outputs', 'Nash_FOC_all_betas.csv'), row.names = F)
+}else{
+  final2 = read.csv(here('code_outputs', 'Nash_FOC_all_betas.csv'))
+}
+
+
+final2 = final2 %>%
+  mutate(sign = sign(cond))%>%
+  mutate(lagsign = sign(lag(cond)))%>%
+  mutate(sign_change = sign + lagsign)
+
+final2 = final2[3:nrow(final2),]
+
+
+# Start and we'll see what gives
+
+# Set dataframe for study
+
+storage_loc = data.frame(0,0,0,0,0,0,0,0)
+colnames(storage_loc) = colnames(final2)
+
+for(row_ in 1:nrow(betas)){
+  # Isolate the right beta combination
+  tester = final2 %>%
+    subset(beta1 == betas[row_,1] & beta2 == betas[row_,2])
+  
+  # For each value of f1, I want to find either if the condition is always positive, hence f1A is maximum of range, or if it is not and there are 2 crossings. In the case of 2 crossings, based on the hypothesis that |int(0, crossing_point1)|<int(crossing_point1, crossing_point2) (e.g. the negative  welfare from 0 to first crossing point is lower than the gain in welfare from 1st to 2nd crossing points)
+  
+  for(value in unique(tester$f1B)){
+    dat_ = tester %>%
+      filter(f1B == value)
+    
+    # Set the unique sign change values
+    unique_ = dat_%>%
+      slice(-1)%>% # Drop first row because it is always a duplicate due to lag?
+      select(sign_change)%>%
+      unique()%>%
+      pull()
+    
+    # Check all the values of the condition:
+    unique_cond = dat_%>%
+      slice(-1)%>% # Drop first row because it is always a duplicate due to lag?
+      select(cond)%>%
+      unique()%>%
+      pull()
+    
+    # First thing: check if the NE FOC is defined for that combination of values. If not, set f1A as undefined
+    if(sum(unique_cond == 0) == length(unique_cond)){
+      to_keep = dat_ %>%
+        subset(f1A == max(dat_$f1A))%>%
+        mutate(f1A = NA)
+    }else{
+          # If all the signs are positive, there is never a crossing : pick max f1
+      if(sum(unique_>=0)==length(unique_)){
+        to_keep = dat_ %>%
+          subset(f1A == max(dat_$f1A))
+      }else{ 
+        to_keep = dat_ %>%
+          subset(sign_change >= 0)%>% # Use >= 0 to account for diff sign = 0 (e.g crossing point) as well as when there is no crossing after
+          group_by(f1B)%>% # Group by f1B to find the max of the two crossing points
+          mutate(max_f1 = max(f1A))%>%
+          ungroup()%>%
+          subset(f1A == max_f1)%>% # Only keep the max of crossing points
+          select(-max_f1) # No need to max_f1A as we kept the maximal values
+      }
+    }
+    storage_loc = rbind(storage_loc, to_keep)
+  }
+}
+
+storage_loc %>%
+  #subset(beta2 %in% c(0, .4, .8))%>%
+  mutate(beta1 = as.factor(beta1), 
+         beta2 = as.factor(beta2))%>%
+  ggplot(aes(x = f1B, y= f1A, color = beta1))+
+  geom_point(size = 1.1)+
+  scale_color_brewer(palette = "Spectral")+
+  facet_grid(~beta2)+
+  theme_bw()
+
+```
+
+```{r, new viz of new results}
+storage_loc %>%
+  #subset(beta2 %in% c(0, .4, .8))%>%
+  mutate(beta1 = as.factor(beta1), 
+         beta2 = as.factor(beta2))%>%
+  mutate(beta1 = paste0("Beta 1 = ", beta1),
+         beta2 = paste0('Beta 2 = ', beta2))%>%
+  ggplot(aes(x = f1B, y= f1A))+
+  geom_point(size = 1.1)+
+  facet_grid(beta1~beta2)+
+  theme_bw()
+
+```
+
+Need to explore these results in a little more detail.
+
+1. Need to understand the $\beta^A_B = \beta^B_A = 1$ results. As stated before from the analytical version : *if  $\beta^A_B = \beta^B_A = 1$  then there is no solution to the first order condition, or an indeterminate solution that does not depend on $f$. That is to say the best response function is independent of the other player, and is indeterminate : you keep as much in as you lose out, e.g. when erecting a fence, you keep a resource flow (and value flow) exactly equivalent to the one you keep out. If there is no differences in growth parameters, then every combination is a best response.*
+However, here it seems like the BR function is such that when they both equal to 1, $f_{1A}(f_{1B})$ is inelastic. That might be a coding artifact : now solved
+
+2. Does it make sense to have a best response when either $\beta = 1$ ?
+
+
+```{r, check result for beta is 1}
+final2 %>%
+  subset(beta1 ==1 & beta2==1)%>%
+  select(cond)%>%
+  sum()
+```

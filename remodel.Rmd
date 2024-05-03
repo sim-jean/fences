@@ -1,0 +1,607 @@
+---
+title: "Model2"
+author: "Simon"
+date: "2024-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(dplyr)
+library(magrittr)
+library(tidyr)
+library(ggplot2)
+library(reshape2)
+library(tinytable)
+library(igraph)
+```
+
+## Parameters
+
+```{r, Params}
+# Initial stock
+X1 = 10
+X2 = 10
+# Growth
+alpha1 = .80
+alpha2 = .8
+
+# Relative fencing efficiencies
+beta1 = .8
+beta2 = .8
+base = 0
+
+#Scaling for dispersal
+k = 10
+
+# Discounting
+delta = .99
+
+# Econ
+p = 100
+cA = 1
+cB = 99
+
+```
+
+## Function
+
+```{r, Functions}
+
+dispersal = function(i,
+                     j,
+                     fi,
+                     fj,
+                     k. = k,
+                     base. = base, 
+                     beta1. = beta1, 
+                     beta2. = beta2){
+  if(j == 2){
+    y = exp(- (base. + fi + beta1.*fj)/k.)
+  }else if(j==1){
+    y = exp( - (base.+ fj + beta2.*fi)/k.)
+  }
+  return(y)
+}
+
+partial_dispersal = function(i,
+                             j,
+                             fi,
+                             fj,
+                             type,
+                             k. = k){
+  if(!(type %in% c('own', 'cross'))){
+    stop("derivative type is not 'own' nor 'cross'" )
+  }else if(type == 'own'){
+    y = -1/k * dispersal(i,j,fi,fj,k.)
+  }else if(type == 'cross'){
+    if(j == 1){
+      y = -beta2/k * dispersal(i,j,fi,fj,k.)
+    }else if(j==2){
+      y = - beta1/k * dispersal(i,j,fi,fj,k.)
+    }
+  }
+  return(y)
+}
+
+growth = function(x,alpha){
+  return(x^ alpha)
+}
+
+marginal_growth = function(x,alpha){
+  return(alpha * x^(alpha-1))
+}
+
+# Optimal escapement
+e1 = function(f1,
+              f2, 
+              beta1,
+              beta2){
+  y = (1/(delta*alpha1))*(p-cA)/((1 - dispersal(1,2,f1,f2, beta1. = beta1, beta2. = beta2))* (p-cA) + (p-cB) * dispersal(1,2,f1,f2,beta1. = beta1, beta2. = beta2))
+  y = y^(1/(alpha1 - 1))
+  z = min(y,X1)
+  return(z)
+} 
+
+
+e2 = function(f1,
+              f2,
+              beta1, 
+              beta2){
+  y = (1/(delta*alpha2))*(p-cB)/((1 - dispersal(2,1,f1,f2, beta1. = beta1, beta2. = beta2))*(p-cB) + dispersal(2,1,f1,f2, beta1. = beta1, beta2. = beta2)*(p-cA))
+  y = y^(1/(alpha2 - 1))
+  z = min(y, X2)
+  return(z)
+}
+
+# Overall welfare
+welfare = function(f1,f2, beta1, beta2){
+  y = (p - cA) * (X1 - e1(f1,f2, beta1, beta2)) + 
+      (p - cB) * (X2 - e2(f1,f2, beta1, beta2))
+  z = (p - cA) * ((1 - dispersal(1,2,f1,f2, beta1, beta2)) * growth(e1(f1,f2, beta1, beta2), alpha1) +
+                   dispersal(2,1,f1,f2, beta1, beta2) * growth(e2(f1,f2, beta1, beta2), alpha2)) + 
+      (p-  cB) * ((1 - dispersal(2,1,f1,f2, beta1, beta2)) * growth(e2(f1,f2, beta1, beta2),alpha2) +
+                  dispersal(1,2,f1,f2, beta1, beta2) * growth(e1(f1,f2, beta1, beta2), alpha1))
+  return(y + delta * z)
+}
+
+# Model wrap up
+model = function(f1, f2, scenario, rounder = 4){
+   y = c(scenario, round(dispersal(1,2,f1,f2), rounder), round(dispersal(2,1,f1,f2),rounder), round(e1(f1,f2),rounder),
+         round(e2(f1,f2),rounder), round(marginal_growth(e1(f1,f2), alpha1),rounder), 
+         round(marginal_growth(e2(f1,f2), alpha2),rounder), 
+         round(1/delta,rounder), 
+         round(welfare(f1,f2),rounder))
+
+  names(y) = c('Scenario', 'Dispersal from 1 to 2', 'Dispersal from 2 to 1', 'Optimal escapement in 1', 'Optimal escapement in 2', 'Marginal growth in 1', 'Marginal growth in 2', '1/delta', "Welfare")
+  return(y)
+}
+```
+
+Intuitions are : 
+
+* If there is a cost heterogeneity, absent biological heterogeneity, and given linear marginal cost, it is welfare improving to have resource flow from the high to low cost region. For example, in the case where $beta=0$, e.g. there is no cross productivites of fencing, would expect maximum fencing in low cost, and no fencing in high cost, to be welfare maximizing. 
+
+```{r, essai}
+# A. Characterize baseline : source sink dynamics from B to A
+f1_baseline = 4
+f2_baseline = 45
+
+dispersal(1,2, f1_baseline, f2_baseline, beta1. = 0, beta2. = 0)
+dispersal(2,1,f1_baseline, f2_baseline, beta1. = 0, beta2. = 0)
+
+e1(f1_baseline, f2_baseline, 0, 0)
+e2(f1_baseline, f2_baseline, 0, 0)
+
+welfare_baseline = welfare(f1_baseline, f2_baseline, 0, 0)
+welfare_baseline
+# B. Now, apply a fencing rule where resource remains in A. 
+
+f1_policy = f1_baseline * 5 
+
+dispersal(1,2,f1_policy, f2_baseline, beta1. = 0, beta2. = 0)
+dispersal(2,1,f1_policy, f2_baseline, beta1. = 0, beta2. = 0)
+
+e1(f1_policy, f2_baseline, 0, 0)
+e2(f1_policy, f2_baseline, 0, 0)
+
+marginal_growth(e1(f1_policy, f2_baseline, 0, 0), alpha1)
+1/delta
+
+welfare(f1_policy, f2_baseline, beta1 = 0, beta2= 0)
+# Welfare has increased from fencing. 
+
+# C. What happens if A is fenced, but B sends resources compared to baseline?
+f2_policy = f2_baseline * .9
+
+dispersal(1,2,f1_policy, f2_policy, beta1. = 0, beta2. = 0)
+dispersal(2,1,f1_policy, f2_policy, beta1. = 0, beta2. = 0)
+
+e1(f1_policy, f2_policy, 0, 0)
+e2(f1_policy, f2_policy, 0, 0)
+
+welfare(f1_policy, f2_policy, 0, 0)
+
+# Welfare decreases with less fencing. 
+
+# D. What happens if A is fenced, but B sends resources even more ??
+
+f2_policy = f2_baseline * .85
+
+dispersal(1,2,f1_policy, f2_policy, beta1. = 0, beta2. = 0)
+dispersal(2,1,f1_policy, f2_policy, beta1. = 0, beta2. = 0)
+
+e1(f1_policy, f2_policy, 0, 0)
+e2(f1_policy, f2_policy, 0, 0)
+
+welfare(f1_policy, f2_policy, 0, 0)
+
+# E. What happens if A is fully fenced, and B sends all the resources? 
+
+f1_policy = 1000
+f2_policy = 0
+
+dispersal(1,2,f1_policy, f2_policy, 0, 0)
+dispersal(2,1,f1_policy, f2_policy, 0, 0)
+
+e1(f1_policy, f2_policy, 0, 0)
+e2(f1_policy, f2_policy, 0, 0)
+
+welfare(f1_policy, f2_policy, beta1 = 0, beta2 = 0)
+```
+
+Results are weird : in this case, an interior level of dispersal is still optimal
+
+```{r, optimal}
+
+input_ = expand.grid(seq(1, 50, by = .5), seq(1, 50, by = .5))
+results_ = data.frame(matrix(ncol = 7))
+
+for(i in 1:nrow(input_)){
+  results_[i,] = c(input_[i,1], 
+                   input_[i,2], 
+                   dispersal(1, 2, input_[i,1], input_[i,2], beta1. = 0, beta2. = 0),
+                   dispersal(2, 1, input_[i,1], input_[i,2], beta1. = 0, beta2. = 0),
+                   e1(input_[i,1], input_[i,2], 0, 0),
+                   e2(input_[i,2], input_[i,2], 0, 0), 
+                   welfare(input_[i,1], input_[i,2], 0, 0))
+}
+
+colnames(results_) = c('fA', 'fB', 'dAB', 'dBA', 'eA', 'eB', 'V')
+
+results_ = results_ %>%
+  mutate(normalized_v = 100*(V - welfare_baseline)/welfare_baseline)
+
+results_%>%
+  ggplot(aes(x = fA, y = fB, fill = normalized_v))+
+  geom_tile()
+
+
+```
+
+I don't understand the results : they depend on a lot of things actually!! Here, I checked for different cost differentials. It's unclear what does what. 
+
+
+* In some situations, reducing the fencing is better, as shown by my results. 
+
+# Run the whole model for different parameter values
+
+
+```{r, see different values}
+
+run_model_param = function(X1,
+                           X2,
+                           alpha1,
+                           alpha2, 
+                           beta1,
+                           beta2,
+                           p, 
+                           cA,
+                           cB,
+                           f1_baseline,
+                           f2_baseline){
+  dispersal = function(i,
+                     j,
+                     fi,
+                     fj,
+                     k. = k,
+                     base. = base, 
+                     beta1. = beta1, 
+                     beta2. = beta2){
+  if(j == 2){
+    y = exp(- (base. + fi + beta1.*fj)/k.)
+  }else if(j==1){
+    y = exp( - (base.+ fj + beta2.*fi)/k.)
+  }
+  return(y)
+}
+
+  partial_dispersal = function(i,
+                               j,
+                               fi,
+                               fj,
+                               type,
+                               k. = k){
+    if(!(type %in% c('own', 'cross'))){
+      stop("derivative type is not 'own' nor 'cross'" )
+    }else if(type == 'own'){
+      y = -1/k * dispersal(i,j,fi,fj,k.)
+    }else if(type == 'cross'){
+      if(j == 1){
+        y = -beta2/k * dispersal(i,j,fi,fj,k.)
+      }else if(j==2){
+        y = - beta1/k * dispersal(i,j,fi,fj,k.)
+      }
+    }
+    return(y)
+  }
+
+  growth = function(x,alpha){
+    return(x^ alpha)
+  }
+
+  marginal_growth = function(x,alpha){
+    return(alpha * x^(alpha-1))
+  }
+
+# Optimal escapement
+  e1 = function(f1,
+                f2, 
+                beta1,
+                beta2){
+    y = (1/(delta*alpha1))*(p-cA)/((1 - dispersal(1,2,f1,f2, beta1. = beta1, beta2. = beta2))* (p-cA) + (p-cB) * dispersal(1,2,f1,f2,beta1. = beta1, beta2. = beta2))
+    y = y^(1/(alpha1 - 1))
+    z = min(y,X1)
+
+    return(z)
+  } 
+
+
+  e2 = function(f1,
+                f2,
+                beta1, 
+                beta2){
+    y = (1/(delta*alpha2))*(p-cB)/((1 - dispersal(2,1,f1,f2, beta1. = beta1, beta2. = beta2))*(p-cB) + dispersal(2,1,f1,f2, beta1. = beta1, beta2. = beta2)*(p-cA))
+    y = y^(1/(alpha2 - 1))
+    z = min(y, X2)
+    return(z)
+  }
+
+# Overall welfare
+  welfare = function(f1,
+                     f2,
+                     beta1,
+                     beta2){
+    y = (p - cA) * (X1 - e1(f1,f2, beta1, beta2)) + 
+        (p - cB) * (X2 - e2(f1,f2, beta1, beta2))
+    z = (p - cA) * ((1 - dispersal(1,2,f1,f2, beta1, beta2)) * growth(e1(f1,f2, beta1, beta2), alpha1) +
+                   dispersal(2,1,f1,f2, beta1, beta2) * growth(e2(f1,f2, beta1, beta2), alpha2)) + 
+        (p-  cB) * ((1 - dispersal(2,1,f1,f2, beta1, beta2)) * growth(e2(f1,f2, beta1, beta2),alpha2) +
+                  dispersal(1,2,f1,f2, beta1, beta2) * growth(e1(f1,f2, beta1, beta2), alpha1))
+    return(y + delta * z)
+  }
+  
+  
+  welfare_baseline = welfare(f1_baseline, f2_baseline, beta1, beta2)
+  
+  input_ = expand.grid(seq(1, 100), seq(1, 100))
+  results_ = data.frame(matrix(ncol = 7))
+
+  for(i in 1:nrow(input_)){
+    results_[i,] = c(input_[i,1], 
+                     input_[i,2], 
+                     dispersal(1, 2, input_[i,1], input_[i,2], beta1. = 0, beta2. = 0),
+                     dispersal(2, 1, input_[i,1], input_[i,2], beta1. = 0, beta2. = 0),
+                     e1(input_[i,1], input_[i,2], beta1, beta2),
+                     e2(input_[i,2], input_[i,2], beta1, beta2), 
+                     welfare(input_[i,1], input_[i,2], 0, 0))
+  }
+
+  colnames(results_) = c('fA', 'fB', 'dAB', 'dBA', 'eA', 'eB', 'V')
+
+  results_ = results_ %>%
+    mutate(normalized_v = 100*(V - welfare_baseline)/welfare_baseline)
+
+  return(results_)
+}
+
+a = run_model_param(10, 
+                  10, 
+                  .9, 
+                  .1,
+                   0, 
+                   0,
+                  1000, 
+                  1, 
+                  999, 
+                  25,
+                  1)
+a %>%
+    ggplot(aes(x = fA, y = fB, fill = normalized_v))+
+    geom_tile()
+
+which(a$V==max(a$V))
+```
+
+
+Test something : 
+
+```{r, def eA}
+eA = function(dab){
+  y = 1/(delta*alpha1)*(p-cA)/((p-cA) + dab*(cA - cB))
+  y = y^(1/(alpha1-1))
+  return(y)
+}
+eA(.1)
+eA(.8)
+```
+
+
+#### Model with new functional form
+
+Test with new functional form : 
+
+* Growth is logarithmic and homogenous
+* Dispersal has no cross effect and is exponential : $d_{ijt+1}=\exp(-f_1^i)$
+
+```{r, functions model 2}
+
+p = 20
+cA = 1
+cB = 18
+
+
+growth = function(x){
+  return(log(x+1))
+}
+
+dispersal = function(f){
+  return(exp(-f))
+}
+
+e1 = function(f1){
+  y = delta -1 + delta * dispersal(f1)*(cA - cB)/(p - cA) 
+  return(max(0,min(y,X1)))
+}
+
+e2 = function(f2){
+  y = delta - 1 + delta * dispersal(f2)*(cB - cA)/(p - cB)
+  return(max(0,min(y,X2)))
+}
+
+welfare = function(f1, f2){
+  y = (p-cA)*(X1 - e1(f1)) + (p-cB)*(X2 - e2(f2)) + delta * (p-cA)*((1 - dispersal(f1))*growth(e1(f1)) + dispersal(f2)*growth(e2(f2))) + delta* (p-cB)*((1-dispersal(f2))*growth(e2(f2)) + dispersal(f1)*growth(e1(f1)))
+  return(y)
+}
+
+
+input_ = expand.grid(seq(0.1, 5, by =.05), seq(.1, 5, by = .05))
+results_ = data.frame(matrix(ncol = 7))
+
+for(i in 1:nrow(input_)){
+  results_[i,] = c(input_[i,1], 
+                   input_[i,2], 
+                   dispersal(input_[i,1]),
+                   dispersal(input_[i,2]),
+                   e1(input_[i,1]),
+                   e2(input_[i,2]), 
+                   welfare(input_[i,1], input_[i,2]))
+}
+colnames(results_) = c('f1', 'f2', 'dAB', 'dBA', 'e1', 'e2', 'W')
+
+welfare_full_fence = welfare(1000,1000)
+results_ %>%
+  mutate(v_relative = (W - welfare_full_fence)/welfare_full_fence)%>%
+  ggplot(aes(x = f1, y = f2, fill = v_relative))+
+  geom_tile()
+
+e1(0)
+e2(0)
+```
+
+
+```{r check corner conditions}
+to_check_e1 = function(X1){
+  y = 1/(cB - cA)*((p-cB)/(alpha1*delta)*X1^((1-alpha1)/alpha1) - (p-cB))
+  return( - log(y))
+}
+
+to_check_e1(1)
+
+foc_f2 = function(f1){
+  y = delta * exp(-f1)*( alpha1*delta/(p-cB)*((p-cB) + (cB - cA)*exp(-f1)))^(alpha1/(1-alpha1))*(cA - cB)
+  return(y)
+}
+
+#foc_f1 = function(f1){
+#  y = 
+#}
+
+check = data.frame(x = seq(0,20))%>%
+  mutate(foc_f2 = foc_f2(x))
+check%>%
+  ggplot(aes(x = x, y = foc_f2))+
+  geom_line()
+
+int(foc_f2)
+```
+
+### Model with concave growth and exponential dispersal
+
+```{r, model 3rd attempt}
+X1 = .8
+X2 = .8
+
+e1 = function(f1){
+  y = (delta * alpha1 * ((p-cA) + (cA - cB) * dispersal(f1))/(p-cA))^(alpha1/(1 - alpha1))
+  return(max(0, min(y, X1)))
+}
+
+e2= function(f2){
+  y = (delta * alpha2 * ((p-cB) + (cB - cA) * dispersal(f2))/(p-cB))^(alpha2/(1 - alpha2))
+  return(max(0, min(y, X2)))
+}
+
+welfare = function(f1, f2){
+  y = (p - cA) * (X1 - e1(f1)) + (p - cB) * (X2 - e2(f2)) + 
+    delta * (p - cA)*((1 - dispersal(f1)) * growth(e1(f1)) + dispersal(f2) * growth(e2(f2))) +
+    delta * (p - cB)*((1 - dispersal(f2)) * growth(e2(f2)) + dispersal(f1) * growth(e1(f1)))
+  return(y)                                                                   
+}
+
+
+welfare(0,0)
+welfare(10, 50)
+
+```
+
+
+## Understanding the structure of the optimization problem
+
+Here, I have weird quantitative results, where the derivative of welfare is negative, but maximized for large rather null values of $f_1^B$. 
+
+```{r, zebi}
+e1B = function(f1){
+  y = ((delta * alpha2 * (p- cB + exp(-f1)*(cB - cA)))/(p - cB))^(1/(1 - alpha2))
+  return(y)
+}
+
+welfare_unique = function(f1){
+  y = (X2 - e1B(f1))*(p - cB) + delta * ((p - cA) * exp(-f1) * e1B(f1)^alpha2 + 
+                                           (p - cB) * (1 - exp(-f1)) * e1B(f1)^alpha2)
+  return(y)
+}
+
+
+data = data.frame(f1 = seq(0,100))%>%
+  mutate(welfare = welfare_unique(f1))
+
+data %>%
+  ggplot(aes(x = f1, y = welfare))+
+  geom_line()
+```
+
+```{r, zebi2}
+e1A = function(f1){
+  y = ((delta * alpha1 * (p- cA + exp(-f1)*(cA - cB)))/(p - cA))^(1/(1 - alpha1))
+  return(y)
+}
+
+welfare_double = function(f1,f2){
+  y = (X1 - e1A(f1)) * (p - cA) + (X2 - e1B(f2)) * (p -cB)
+  z = (p - cA) * ( (1 - exp(-f1)) * e1A(f1)^alpha1 + exp(-f2) * e1B(f2)^alpha2)
+  m = (p - cB) * ( (1 - exp(-f2)) * e1B(f2)^alpha2 + exp(-f1) * e1A(f1)^alpha2)
+  return(y + delta*(z+m))
+}
+
+welfare_simpleA = function(f1){
+  y = (X1 - e1A(f1)) * (p - cA) + delta * ((p - cA) * (1 - exp(-f1)) * e1A(f1)^alpha1 +
+                                             (p - cB) * exp(-f1) * e1A(f1)^alpha1)
+  return(y)
+}
+
+data = data.frame(f1A = seq(0,100))%>%
+  mutate(welfareA = welfare_simpleA(f1A))
+
+data %>%
+  ggplot(aes(x = f1A, y = welfareA))+
+  geom_line()
+
+
+input_ = expand.grid(seq(0,100), seq(0,100))
+colnames(input_) = c('f1A', 'f1B')
+input_$welfare_simple_A = welfare_simpleA(input_$f1A)
+input_$welfare_simple_B = welfare_unique(input_$f1B)
+input_$welfare_total = input_$welfare_simple_A + input_$welfare_simple_B
+
+
+input_ %>%
+  subset(f1B %in% c(0,1,5,10,20,30))%>%
+  mutate(f1B = as.factor(f1B))%>%
+  ggplot(aes(x = f1A, y = welfare_total, color = f1B))+
+  geom_line()
+
+input_ %>%
+  ggplot(aes(x = f1A, y = f1B, fill = welfare_total))+
+  geom_tile()
+
+```
+
+
+```{zebi}
+
+input_ = expand.grid(seq(0,100), seq(0,100))%>%
+  mutate(welfare = NA)
+colnames(input_) = c('f1A', 'f1B','welfare')
+
+for(i in 1:nrow(input_)){
+  input_[i, 'welfare'] = welfare(input_[i,'f1A'], input_[i,'f1B'])
+}
+
+input_ %>%
+  filter('f1A' %in% c(0,5))%>%
+  mutate(Var1 = as.factor(Var1))%>%
+  ggplot(aes(x = Var2, y = welfare, color = Var1))+
+  geom_line()
+
+```

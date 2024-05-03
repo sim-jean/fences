@@ -1,0 +1,804 @@
+---
+title: "Spatial externality dilemma"
+author: "Simon"
+date: "2024-03-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(dplyr) 
+library(kableExtra)
+library(magrittr)
+library(tidyr)
+library(ggplot2)
+library(reshape2)
+library(tinytable)
+library(igraph)
+library(scales)
+library(here)
+
+rm(list = ls())
+```
+
+## A simple model : 1 way fencing with independent decision making in two patches, and 2 periods
+
+### Key messages
+
+In the presence of spatial heterogeneity (whether it is economic or biological (to prove)), solving the spatial externality is not welfare maximizing. The "full" Nash equilibrium, where property rights are exclusively assigned and patch owners have full control over migration flows and harvest, does not result in an optimal allocation. A sole owner leverages heterogeneity to maximize welfare. 
+
+### General set up
+
+We are in a simplified set up, where there are two patches $A$ and $B$ owned by different landowners. They manage a spatially distributed renewable resource e.g. (i) the resource grows according to its stock size, (ii) and disperses through space. In this simplified example, we focus on the management over **two periods**.
+
+### Set up - in special case
+
+For the biological module, I use : 
+
+* a concave, power growth function where $\alpha \in ]0,1[$ :
+  $$g_i(e_{it}) = e_{it}^{\alpha_i}$$
+  
+* an exponential specification for outgoing dispersal with :
+  (i) symmetric efficiencies
+  (ii) symmetric baseline
+  (iii) no cross effect 
+  
+    $$d_{ijt}(f_{it}) = \exp(-f_{it})$$
+In the economic module : 
+
+* Price is homogeneous, but marginal costs of harvesting are : 
+  i. Linear 
+  ii. Stock independent
+  iii. Heterogeneous
+  
+  $$ MB = (p-c_i) $$
+Hence, Marginal benefit from harvesting is **always positive**.
+
+#### Parameters 
+
+```{r, parameters}
+# Initial stock
+X1 = .8
+X2 = .8
+# Growth
+alpha1 = .8
+alpha2 = .8
+
+# Relative fencing efficiencies
+beta1 = .8
+beta2 = .8
+base = 0
+
+#Scaling for dispersal
+k = 1
+
+# Discounting
+delta = .99
+
+# Econ
+p = 30
+#cA = p - 10
+cB = p - 10
+
+# To guarantee internal solution we must have : 
+
+# (p - cB)/(p - cA) >= (delta * alpha1)/( X1^(1 - alpha1))
+# For given values here : 
+threshold = (delta * alpha1)/( X1^(1 - alpha1))
+
+cA = (cB - p)/threshold + p + 0.05
+
+# Baseline functions : 
+dispersal = function(f, 
+                     base, 
+                     k){
+  y = exp(- (base + f)/k)
+  return(y)
+}
+
+
+parameters = data.frame(initial_stockA = X1,
+                        initial_stockB = X2, 
+                        alpha_A = alpha1, 
+                        alpha_B = alpha2,
+                        beta_A = beta1, 
+                        beta_B = beta2, 
+                        k = k,
+                        delta = delta,
+                        price = p, 
+                        cA = cA, 
+                        cB = cB)
+kable(parameters)
+```
+
+### A. Nash equilibrium
+
+#### General case solution
+
+The problem for each or patch owner $A$ or $B$ is : 
+
+#### Special case :  solution 
+
+In this case, each landowner tries to solve the spatial externality. In this case, they maximise their welfare as a function of escapement and fencing : 
+
+\begin{align}
+\max_{e_{i1}, f_{i1}} (p - c_i) (X_{i1} - e_{i1}) + \delta(p-c_i)[(1-\exp(-f_{it}))e_{it}^\alpha + \exp(-f_{jt})e_{jt}^\alpha]
+\end{align}
+
+The first order conditions (for an interior solution) : 
+
+\begin{align}
+\frac{\partial V}{\partial e_{i1}} = 0 & \iff e_{i1}^{NE}(f_{i1}) = \left( \delta\alpha (1 - \exp(- f_{i1})) \right)^{\frac{1}{1 - \alpha}} \\
+\frac{\partial V}{\partial f_{i1}} = 0 & \iff \delta (p- c_i)\exp(-f_{i1}) e_{i1}^\alpha = 0\\
+                                       & \iff \delta (p - c_i) \exp( - f_{i1} ) \left( \delta\alpha (1 - \exp(- f_{i1})) \right)^{\frac{\alpha}{1 - \alpha}} = 0 
+\end{align}
+
+In this case, from the FOC, two potential solutions emerge $S = \{0, \infty\}$. At $f_{i1}=0$, $d_{ij}(0)=1$, that is to say, all the resource leaves, it is likely to be a minimum. In the case of $f_{i1} \to \infty$, all the resource remains in the patch. 
+
+```{r, FOC NE}
+
+FOC_NE = function(f, base, k){
+  y = delta * (p - cA) * dispersal(f, base, k) * (delta * alpha1 * (1 - dispersal(f, base, k)))^(alpha1/(1 - alpha1))
+  return(y)
+}
+
+data = data.frame(f = seq(0,50, 0.5))%>%
+  mutate(foc = FOC_NE(f, base, k))
+data %>% 
+  ggplot(aes(x = f, y = foc))+
+  geom_line()
+```
+
+From this curve, we see that the integral of the derivative yielding the FOC is positive (eg the curve is always above). The patch owner has a better interest in fencing to the maximum. Hence, the first order condition defines a **dominant strategy** such that $\forall i$, $f_{i1}\to \infty$. In this case, as fencing is costless and the marginal benefit of harvesting is always positive, each patchowner has an interest in fencing their land to reduce outflow. In doing so, they change their harvest : 
+
+\begin{align}
+e_{1A}^* = (\delta \alpha)^{\frac{1}{1 - \alpha}}\\
+e_{1B}^* = (\delta \alpha)^{\frac{1}{1 - \alpha}}
+\end{align}
+
+Compared to a no-fencing Nash equilibrium, escapement increases in each patch. Moreover, with fencing, the *spatial externality is resolved* : patches are no longer connected. Therefore, each patch owner efficiently harvests (Costello and Polasky, 2008) its resource stock. 
+
+### B. Optimal harvest and fencing
+
+The sole planner objective function is : 
+
+
+\begin{align*}
+\max_{e_{1A},e_{1B}, f_{1A}, f_{1B}} (p-c_A) (X_{1A} - e_{1A}) + (p-c_B)(X_{1B} - e_{1B}) +& \delta \left[ (p-c_A)\left( (1 - \exp(-f_{1A}))(e_{1A})^\alpha + \exp(-f_{1B})(e_{1B})^\alpha  \right) \right. \\
+& + \left. (p - c_B) \left( (1 -\exp(-f_{1B}))(e_{1B})^\alpha + \exp(-f_{1A})(e_{1A})^\alpha \right)\right]
+\end{align*}
+
+The first order condition for an interior escapement is akin to Costello and Polasky (2008) : 
+
+\begin{align*}
+e_{1A}^* &= \left( \frac{\delta \alpha \left( (p-c_A) + \exp(-f_{1A})(c_A  - c_B) \right)}{p-c_A}\right)^{\frac{1}{1 - \alpha}}\\
+e_{1B}^* & = \left( \frac{\delta \alpha \left( (p-c_B) + \exp(-f_{1B})(c_B - c_A) \right)}{p-c_B}\right)^{\frac{1}{1 - \alpha}}
+\end{align*}
+
+Second, the first order conditions for escapement are : 
+
+\begin{align}
+\frac{\partial V}{\partial f_{1A}} = \delta (c_B - c_A) \exp(-f_{1A})e_{1A}^\alpha \geq 0\\
+\frac{\partial V}{\partial f_{1B}} = \delta (c_A - c_B) \exp(-f_{1A})e_{1A}^\alpha \geq 0\\
+\end{align}
+
+First, notice that the marginal value of fencing in a given patch for a sole owner corresponds to the discounted differential in marginal benefits from patches caused by fencing. Indeed, fencing increases the value of the stock when the discounted marginal benefits from redirecting the flow of resource from one patch to the other causes more benefits than current costs (here, 0). Therefore, a necessary condition for optimal fencing to emerge is **cost heterogeneity**. As a matter of fact, in the absence of cost heterogeneity, harvesting is efficient in each patch, whatever the dispersal of the resource. 
+
+
+Here, assume patch $A$ is more efficient at harvesting the resource than patch $B$ such that $c_A < c_B$. In this case, redirecting the resource to patch $A$ is always beneficial. On the other hand, the marginal value of fencing is always negative in patch $B$, the opportunity cost of keeping resource in patch $B$ is always positive, so the sole owner aims at minimizing it.
+
+Hence, the optimal solution is : 
+\begin{align}
+f_{1A} &\to \infty \\
+f_{1B}  &= 0 \\
+e_{1A}  &= (\delta \alpha)^{\frac{1}{1 - \alpha}}\\
+e_{1B}  &= \min\left[X_{1B}, \left(\frac{\delta \alpha (p - c_A)}{p-c_B}\right)^{\frac{1}{1 - \alpha}} \right]
+\end{align}
+
+
+### C. Ranking equilibria
+
+```{r, results}
+results = data.frame(0, 0, 0, 0, 0, 0)
+colnames(results) = c('EscA1', 'EscB1', 'f1A', 'f1B', 'Welfare', 'Scenario')
+```
+
+#### 1. Full Nash Equilibrium
+
+In this case, we have : 
+
+\begin{align}
+f_{i1} &\to \infty \\
+e_{i1} &= (\alpha \delta)^{\frac{1}{1 - \alpha}}
+\end{align}
+
+In this case (e.g only economic heterogeneity), overall welfare is : 
+
+\begin{align}
+W &= (p - c_A)(X_{1A} - e_{1A}^{NE}) + (p - c_B) (X_{1B} - e_{1B}^{NE}) + \delta\left( (p - c_A)[(1 - exp( - f_{1A}^{NE})) (e_{1A}^{NE}) ^\alpha + exp(-f_{AB}^{NE}) (e_{1B}^{NE})^{\alpha}] + (p - c_B)[(1 - exp( - f_{1B}^{NE})) (e_{1B}^{NE})^\alpha + exp( - f_{1A}^{NE})(e_{1A}^{NE})^\alpha] \right) \\
+
+& = (p-c_A)(X_{1A} - (\alpha \delta)^{\frac{1}{1 - \alpha}}) + (p - c_B)(X_{1B} - (\alpha \delta)^{\frac{1}{1 - \alpha}}) + \delta ((p - c_B)  (\alpha \delta)^{\frac{\alpha}{1 - \alpha}} + (p-c_A) (\alpha \delta)^{\frac{\alpha}{1 - \alpha}})\\
+
+& = (p-c_A) X_{1A} + (p - c_B) X_{1B} + (\alpha \delta)^{\frac{1}{1 - \alpha}}(c_A + c_B - 2p) + (\alpha \delta)^{\frac{\alpha}{1 - \alpha}}\delta (2p - c_A - c_B)
+\end{align}
+
+
+```{r, nash equilibrium welfare}
+
+escapement_NE_A = function(f, base, k){
+  y = (delta * alpha1 * (1 - dispersal(f, base, k)))^(1/(1 - alpha1))
+  return(min(y,X1))
+}
+
+escapement_NE_B = function(f, base, k){
+  y = (delta * alpha2 * (1 - dispersal(f, base, k)))^(1/(1 - alpha2))
+  return(min(y,X2))
+}
+
+welfare_NE_A = function(f1, f2, base1, k1, base2, k2){
+  y = (p - cA) * (X1 - escapement_NE_A(f1, base1, k2)) + 
+    delta * (p - cA) * ((1 - dispersal(f1, base1, k1))* escapement_NE_A(f1, base1, k1)^alpha1+
+                          dispersal(f2, base2, k2) *  escapement_NE_B(f2,base2, k2)^alpha2)
+  return(y)
+}
+
+welfare_NE_B = function(f1, f2, base1, k1, base2, k2){
+  y = (p - cB) * (X2 - escapement_NE_B(f1, base1, k1)) + 
+    delta * (p - cB) * ((1 - dispersal(f1, base1, k1))* escapement_NE_B(f1, base1, k1)^alpha1+
+                                                                            dispersal(f2, base2, k2) *  escapement_NE_A(f2,base2, k2)^alpha2)
+  return(y)
+}
+
+# Compute welfare
+
+W_NE = welfare_NE_A(1000, 1000, base, k, base, k) + welfare_NE_B(1000, 1000, base, k, base, k)
+
+W_check = (p - cA)*X1 + (p - cB)*X2 + (delta * alpha1)^(1/(1 - alpha1))*(cA + cB - 2*p) + (delta * alpha1)^(alpha1/(1 - alpha1))*delta*(2*p - cA - cB)
+
+
+results = rbind(results, c(escapement_NE_A(1000, base, k), escapement_NE_B(1000, base, k), 
+                           1000, 1000, W_NE, 'Nash Equilibrium'))
+
+```
+
+
+Description : 
+
+1. The spatial externality is solved : harvest levels are optimal in the absence of spatial heterogeneity
+
+2. However, due to the spatial heterogeneity, this does not maximize collective welfare because arbitrage opportunities are not leveraged, e.g., by solving the private management spatial externality, get rid of part of the problem, but does not leverage the public management spatial arbitrage opportunity. 
+
+
+
+#### 2. Sole owner
+
+In this case : 
+
+\begin{align}
+f_{1A}^{SO} &\to \infty\\
+f_{1B}^{SO} &= 0\\
+e_{1A}^{SO} &= (\delta \alpha)^{\frac{1}{1 - \alpha}}\\
+e_{1B}^{SO} &= (\delta \alpha)^{\frac{1}{1 - \alpha}} \left( \frac{p - c_A}{p - c_B}\right)^{\frac{1}{ 1 - \alpha}}
+\end{align}
+
+Hence, welfare is : 
+
+\begin{align}
+W &= (p - c_A)(X_{1A} - (\delta \alpha)^{\frac{1}{1 - \alpha}}) + (p - c_B) \left(X_{1B} - (\delta \alpha)^{\frac{1}{1 - \alpha}} \left( \frac{p - c_A}{p - c_B}\right)^{\frac{1}{ 1 - \alpha}}\right) \\
+& + \delta (p - c_A)\left( (\delta \alpha)^{\frac{\alpha}{1 - \alpha}} +(\delta \alpha)^{\frac{\alpha}{1 - \alpha}} \left( \frac{p - c_A}{p - c_B}\right)^{\frac{\alpha}{ 1 - \alpha}} \right)\\
+& =  (p-c_A) X_{1A} + (p - c_B) X_{1B} - (\delta \alpha)^{\frac{1}{1 - \alpha}}\left[p- c_A + (p- c_B)\left(\frac{p - c_A}{p - c_B}\right)^{\frac{1}{ 1 - \alpha}}\right] \\
+&+ (\delta \alpha)^{\frac{\alpha}{1 - \alpha}} \delta (p - c_A)\left( 1 + \left(\frac{p - c_A}{p - c_B}\right)^{\frac{\alpha}{ 1 - \alpha}}\right)
+\end{align}
+
+```{r, sole owner}
+e1B = function(f1, 
+               p,
+               cA, 
+               cB,
+               base , 
+               k){
+  y = ((delta * alpha2 * (p - cB + dispersal(f1, base, k)*(cB - cA)))/(p - cB))^(1/(1 - alpha2))
+  y = min(X2, y)
+  return(y)
+}
+
+e1A = function(f1, 
+               p, 
+               cA,
+               cB, 
+               base, 
+               k){
+  y = ((delta * alpha1 * (p - cA + dispersal(f1, base, k)*(cA - cB)))/(p - cA))^(1/(1 - alpha1))
+  y = min(X1,y)
+  return(y)
+}
+
+welfare_simple_B = function(f1,
+                            p, 
+                            cA,
+                            cB, 
+                            base, 
+                            k){
+  y = (X2 - e1B(f1, p, cA, cB,base, k))*(p - cB) + delta * ((p - cA) * dispersal(f1, base,k) * e1B(f1, p, cA, cB, base, k)^alpha2 + 
+                                           (p - cB) * (1 - dispersal(f1, base, k)) * e1B(f1, p, cA, cB, base, k)^alpha2)
+  return(y)
+}
+
+welfare_simple_A = function(f1,
+                            p,
+                            cA,
+                            cB,
+                            base,
+                            k){
+  y = (X1 - e1A(f1, p, cA, cB, base, k)) * (p - cA) + delta * ((p - cA) * (1 - dispersal(f1, base, k)) * e1A(f1, p, cA, cB, base, k)^alpha1 +
+                                             (p - cB) * dispersal(f1, base, k) * e1A(f1, p, cA, cB, base, k)^alpha1)
+  return(y)
+}
+
+W_SO = welfare_simple_A(1000, p , cA, cB, base, k) + welfare_simple_B(0, p, cA, cB, base, k)
+W_check = (p - cA) * X1 + 
+  (p - cB) * X2 + 
+  (delta * alpha1)^(alpha1/(1 - alpha1)) * delta * (p - cA)*(1 + ((p - cA)/(p-cB))^(alpha1 / (1-alpha1))) - 
+  (alpha1 * delta)^(1/(1 - alpha1))*(p - cA + (p - cB)*((p - cA)/(p-cB))^(1/(1-alpha1)))
+
+results = rbind(results, c(e1A(1000, p, cA, cB, base, k), e1B(0, p, cA, cB, base, k), 
+                           1000, 0, W_SO, 'Sole Owner'))
+```
+
+Description : 
+
+1. In this case, we have an optimal redirection of flows to the most valuable patch
+
+2. Because of that, the level of harvest is modified : escapement is larger in $B$ than under classical optimal management as in Costello and Polasky (2008), to foster more profit in the second period. Indeed, the escapement is mediated by a net marginal benefit ratio parameter : the larger the ratio between patch $A$ and patch $B$, the larger the escapement. In some corner cases, a total escapement may arise : all the resource is saved to be shifted away tomorrow in $A$. 
+
+#### 3. Implement an optimal fencing rule but NE harvest
+
+In this case: 
+
+\begin{align}
+f_{1A} & \to \infty\\
+f_{1B} & = 0\\
+e_{1A} & = \lim_{f_{1A} \to \infty} e_{1A}^{NE} = (\delta \alpha)^{\frac{1}{1 - \alpha}}\\
+e_{1B} & = e_{1B}^{NE}(0) = 0\\
+\end{align}
+
+Hence, welfare is : 
+
+\begin{align}
+W = (p - c_A) X_{1A} + (p - c_B) X_{1B} - (\alpha \delta)^{\frac{1}{1 - \alpha}}(p - c_A) + (\alpha \delta)^{\frac{\alpha}{1 - \alpha}}\delta (p - c_A)
+\end{align}
+
+```{r, optimal f - NE h}
+
+W_check = (p - cA)* X1 + (p - cB) * X2 - (alpha1 * delta )^(1/(1 - alpha1))* (p - cA) + (alpha1 * delta )^(alpha1/(1 - alpha1)) * delta * (p - cA)
+
+W_SO_fencing_NE_harvest = welfare_NE_A(1000, 0, base, k, base, k) + welfare_NE_B(0,1000, base, k, base, k)
+
+results = rbind(results, c((alpha1 * delta )^(1/(1 - alpha1)), 0, 1000, 0, W_SO_fencing_NE_harvest, 'SO fencing - NE harvest'))
+```
+
+
+
+Description : 
+
+1. In this case, fencing is optimal e.g. resource should be redirected towards $A$. However, because harvest is non cooperative, the fact that all the resource flows to patch $A$ from $B$ leads to a suboptimal escapement of 0
+
+2. Therefore, while the resource *flow rate* is correct, stock mismanagement is amplified. 
+ 
+
+#### 4. Implement an optimal harvest rule, but NE fencing
+
+
+There are two ways to view this point : 
+
+1. The policy maker sets optimal harvest levels that take into account (i) either observed dispersal flows, or (ii) assumes optimal fencing will arise, but it is the Nash Equilibrium level that is implemented. In this case, it implements the optimal harvest levels from section 1, but actual dispersal is $d_{AB} = d_{BA} = 0$.
+
+\begin{align}
+f_{1A} &\to \infty\\
+f_{1B} &\to \infty\\
+e_{1A} &= \lim_{f_{1A} \to \infty} e_{1A}^{SO} = (\delta \alpha)^{\frac{1}{1 - \alpha}}\\
+e_{1B} & = \lim_{f_{1B} \to \infty} e_{1B}^{SO} = (\delta \alpha)^{\frac{1}{1 - \alpha}} \left( \frac{p - c_A}{p - c_B} \right)^{\frac{1}{1 - \delta}}
+\end{align}
+
+Hence, welfare is : 
+
+\begin{align}
+W = (p - c_A) X_{1A} + (p - c_B) X_{1B} - (\alpha \delta)^{\frac{1}{1 - \alpha}}\left(p - c_A + (p-c_B)\left( \frac{p - c_A}{p - c_B} \right)^{\frac{1}{1 - \delta}}\right) + (\alpha \delta)^{\frac{\alpha}{1 - \alpha}} \delta \left(p - c_A + (p-c_B)\left( \frac{p - c_A}{p - c_B} \right)^{\frac{\alpha}{1 - \delta}}\right)
+\end{align}
+
+```{r, optimal harvest, NE fencing}
+W_SO_harvest_NE_fencing = (p - cA) * X1 + (p - cB) * X2 - 
+  (alpha1 * delta)^(1/(1 - alpha1))*(p - cA + (p - cB) * ((p - cA)/(p - cB))^(1/(1 - alpha1))) + 
+  (alpha1 * delta)^(alpha1/(1 - alpha1))*delta*(p - cA + (p - cB) * ((p - cA)/(p - cB))^(alpha1/(1 - alpha1)))
+
+results = rbind(results, c((alpha1 * delta)^(alpha1/(1 - alpha1)), (delta * alpha1)^(1/(1 - alpha1))*( (p - cA)/(p - cB))^(1/(1 - delta)), 1000, 1000, W_SO_harvest_NE_fencing, 'SO harvest - NE fencing - view1'))
+
+```
+
+
+2. Implements a harvest rule that is dependent on the outflow rate e.g. it sets the optimal harvest rules resulting from the FOCs in section $1$. However, because fencing is not regulated, fencing levels from the Nash Equilibrium are implemented. In that case, the Nash equilibrium prevails as (i) golden rule harvest is achieved but (ii) there is no resource flow
+
+```{r, optimal harvest, NE fencing 2}
+
+W_SO_harvest_NE_fencing = append(W_SO_harvest_NE_fencing, W_NE)
+results = rbind(results, c((alpha1 * delta)^(alpha1/(1 - alpha1)),(alpha1 * delta)^(alpha1/(1 - alpha1)),
+                           1000, 1000, W_SO_harvest_NE_fencing [2], 'SO harvest - NE fencing - view 2'))
+```
+
+#### E. Wrapping up
+
+```{r, finalize result exposure}
+results = results %>%
+  subset(Welfare > 0)%>%
+  relocate('Scenario', .before = 'EscA1')%>%
+  arrange(desc(Welfare))
+
+kable(results)
+```
+
+
+
+### D. Conclusion 
+
+With linear marginal benefits, and a full range of dispersal choices, optimal harvesting rules change. In this case, cost heterogeneity fuels a spatial arbitrage opportunity that the sole owner leverages. She redirects the resource in the most profitable patch, e.g, organizes an *endogenous sink source* dynamic. 
+
+## Policy analysis : should fencing be allowed, promoted? 
+
+Assume a landscape where connectivity is given, with an observed source sink dynamic, from $A$ to $B$. Let $\mathbf{D}_0$ be : 
+
+```{r, D0}
+dAB0 = .4
+dBA0 = .9
+dAA0 = 1 - dAB0
+dBB0 = 1 - dBA0
+
+D0 = matrix(nrow = 2, ncol=2)
+D0[1,1] = dAA0
+D0[1,2] = dAB0
+D0[2,1] = dBA0
+D0[2,2] = dBB0
+
+
+fA0 = - log(dAB0)
+fB0 = - log(dBA0)
+
+print(D0)
+
+```
+
+Assume changing connectivity is forbidden, or is available at a prohibitive cost. In this case, patch owner observe $d_{ij}$ and make their decision : they optimize under the constraint that $f_{ij} = d_{ij}^{-1}(d_{ij}^0)$.
+
+
+```{r, NE application1}
+#Escapements
+
+escA0 = escapement_NE_A(fA0, 0, 1)
+escB0 = escapement_NE_B(fB0, 0, 1)
+
+reference = (delta*alpha1)^(1/(1-alpha1))
+
+escapements_baseline = c(escA0, escB0, escA0+escB0)
+
+#Welfares
+welfares_baseline = c(welfare_NE_A(fA0, fB0, 0, 1, 0, 1), welfare_NE_B(fB0, fA0, 0, 1, 0, 1))
+welfares_baseline[3] = welfares_baseline[1]+welfares_baseline[2]
+harvest_baseline = c(X1, X2, X1+X2) - escapements_baseline
+baseline = data.frame(escapements_baseline, harvest_baseline, welfares_baseline )
+rownames(baseline) = c('A', 'B', 'total')
+
+print(baseline)
+```
+
+Hence, welfare in the baseline is `r baseline['total', 'welfares_baseline']`.
+
+
+After a policy shock, assume fencing is freely available for every landowner. Landowners can now individually maximize their welfare with respect to both harvesting and fencing. In this case : 
+
+
+```{r, NE application2}
+escapements_eq = c(escapement_NE_A(1000, 0, 1),
+                   escapement_NE_A(1000, 0, 1))
+escapements_eq[3] = escapements_eq[2] + escapements_eq[1]
+
+harvest_eq = c(X1, X2, X1+X2) - escapements_baseline
+
+
+welfares_eq = c(welfare_NE_A(1000,1000, 0, 1, 0, 1),
+                welfare_NE_B(1000,1000, 0, 1, 0, 1))
+welfares_eq[3] = welfares_eq[1]+welfares_eq[2]
+
+equilibrium = data.frame(escapements_eq, harvest_eq, welfares_eq)
+
+rownames(equilibrium) = c('A', 'B', 'total')
+
+print(equilibrium)
+```
+
+Allowing fencing is welfare increasing, as lifting restrictions to connectivity improves the efficiency of harvesting locally. 
+
+
+However, the first best policy is such that : 
+
+```{r, functions}
+
+
+escapements_op = c(e1A(1000, p, cA, cB, base, k),
+                   e1B(0, p, cA, cB, base, k))
+escapements_op[3] = escapements_op[2] + escapements_op[1]
+
+harvest_op = c(X1, X2, X1+X2) - escapements_op
+
+
+welfares_op = c(welfare_simple_A(1000, p, cA, cB, base, k),
+                welfare_simple_B(0, p, cA, cB, base, k))
+welfares_op[3] = welfares_op[1]+welfares_op[2]
+
+optimum = data.frame(escapements_op, harvest_op, welfares_op)
+
+rownames(optimum) = c('A', 'B', 'total')
+
+print(optimum)
+```
+
+There is an inefficiency because of over-fencing. 
+
+### Other questions
+
+#### If one layer of choice has to be chosen? - Rewrite that section and investigate the general form. 
+
+
+```{r, test}
+welfare_NE_fencing_Op_harvest = welfare_simple_A(1000, p, cA, cB, base, k) + welfare_simple_B(1000, p, cA, cB, base, k)
+welfare_NE_harvest_Op_fencing = welfare_NE_A(1000,0,base, k, base, k) + welfare_NE_B(0,1000, base, k, base, k)
+```
+
+
+
+Starting from a Nash Equilibrium, with a welfare of `r baseline['total', 'welfares_baseline']` comparing the two policy options : 
+
+* When decentralizing an optimal harvest rule, with Nash equilibrium fencing levels, harvest levels correspond to optimal levels in the absence of cost heterogeneity or solving the spatial externality : 
+  * New welfare is : `r (welfare_NE_fencing_Op_harvest)` 
+  * Welfare change of `r round((welfare_NE_fencing_Op_harvest - baseline['total', 'welfares_baseline'] )/baseline['total', 'welfares_baseline']*100,2)` (in %)
+
+
+* When decentralizing an optimal fencing rule, with Nash equilibrium harvest levels : 
+  * New welfare level is : `r (welfare_NE_harvest_Op_fencing)`
+  * Welfare change of : `r round((welfare_NE_harvest_Op_fencing - baseline['total', 'welfares_baseline'])/baseline['total', 'welfares_baseline']*100,2)` (in %)
+
+However, if the policy baseline policy is an enforcement of **optimal harvesting** (e.g we start from optimal harvest at D0), with a welfare of `r (welfare_simple_A(fA0, p, cA, cB, base,k)+ welfare_simple_B(fB0, p, cA, cB, base, k))` : 
+
+* Keep enforcing the optimal harvest policy but decentralize the Nash harvesting level : 
+  * New welfare is : `r welfare_simple_A(1000, p, cA, cB, base, k) + welfare_simple_B(1000, p, cA, cB, base, k)`
+  * Welfare change of : `r round((welfare_simple_A(1000, p, cA, cB, base, k) + welfare_simple_B(1000, p, cA, cB, base, k) - (welfare_simple_A(fA0, p, cA, cB, base,k)+ welfare_simple_B(fB0, p, cA, cB, base, k)))/(welfare_simple_A(fA0, p, cA, cB, base, k) + welfare_simple_B(fA0, p, cA, cB, base, k))*100,2)` (in %)
+
+* Enforcing an optimal fencing level, but letting the Nash equilibrium harvest : 
+  * New welfare is : `r welfare_NE_harvest_Op_fencing`
+  * Welfare change of : `r round((welfare_NE_harvest_Op_fencing - (welfare_simple_A(fA0, p, cA, cB, base,k)+ welfare_simple_B(fB0, p, cA, cB, base, k)))/(welfare_simple_A(fA0, p, cA, cB, base, k) + welfare_simple_B(fA0, p, cA, cB, base, k))*100,2)` (in %)
+
+#### Comments on those results
+
+1. Unclear what this stems from, if it is general in nature : are welfare gains always larger when a harvest policy is enforced, or can it be more welfare improving when a dispersal policy is enforced ?
+
+2. Does the Nash equilibrium hold with (i) costly fencing and (ii) 2 way fencing? 
+
+  a. Intuition for costly fencing : in this case, the net marginal benefit of fencing is not always positive, there is an optimal amount, that still characterizes a dominant strategy, at lower levels. 
+  
+  b. In the 2 way fencing equilibrium, if my neighbor fully fences, I have no interest in fencing e.g. start from a full fencing allocation, with costly fencing, then it is good to deviate from the point of view of one player because they benefit from the fencing of their neighbor. Hence, first equilibrium identified is no longer an equilibrium in this case. 
+  
+  
+
+## Next steps : 
+
+* Found that (i) Nash equilibrium results in no connectivity, (ii) policy functions collapse together as dispersal goes down, and (iii) value function changes with dispersal, and when it is made a choice, it's not optimal to fence everything : the laissez faire equilibrium can be detrimental compared to a no-fencing policy with baseline dispersal correlated with marginal profit heterogeneity. 
+
+* The wildfire example does not seem to fit in that framework : might work with invasive species and wildfires, at most. May be worth investigating. 
+
+* Depending on the baseline policy framework, may not be worth going further. Not sure this is interesting in the end
+
+* The goal was: can we rationalize observed ecological networks with economic concepts, and can we find reasons why we may have more connectivity than privately optimal? Or then, should I include a resilience, or basically gain to be connected. 
+
+* In this setting, there is no reason or way for people to want to connect more : maybe there is a case for that, in a more complex version of the model, where they try to attract, or increase their bilateral exchange flows? 
+
+
+## Lifting key hypothesis
+
+The results hinge on (i) linear benefits, (ii) one way fencing and (iii) 2 patches. In what follows, I lift these hypothesis. 
+
+### The N patches case
+
+
+
+
+## Appendix
+
+### Follow up on to do : 
+To do : 
+
+1. Clean that part with a clearer baseline, and do the 2 by 2 simulation, compared to full solution e.g : 
+
+  a. Nash equilibrium in both fencing and harvesting
+  
+  b. Mixed outcome : 
+  
+  Nash equilibrium harvesting and optimal fencing
+  Nash equilibrium fencing and optimal harvestin
+    
+  c. Optimal allocation e.g. full sole owner
+
+2. Then, characterize that analytically. 
+
+### Analysis of welfare change 
+
+If the policy maker can decentralize 1 policy choice, which is better? That is to say, is it better to have Nash harvesting with optimal fencing, or Optimal harvesting with Nash fencing? 
+
+
+I define : 
+
+* optimal harvesting as a function of own fencing e.g. `e1A(f1)` and `e1B(f1)`
+* Welfare over time for each plot $A$ and $B$ e.g. `welfare_simple_A(f1)` and `welfare_simple_B(f1)`
+* Aggregate welfare over time by summing welfares across patches
+
+
+
+```{r, illustration}
+input_ = expand.grid(seq(0,40, by =.5), seq(0,40, by = .5))
+colnames(input_) = c('f1A', 'f1B')
+
+input_$welfare_simple_A = welfare_simple_A(input_$f1A, p, p - 2, p - 1, base, k)
+input_$welfare_simple_B = welfare_simple_B(input_$f1B, p, p - 2, p - 1, base, k)
+input_$welfare_total = input_$welfare_simple_A + input_$welfare_simple_B
+
+
+input_ %>%
+  subset(f1B %in% c(0,1,1.5, 2, 3,5,10))%>%
+  mutate(f1B = as.factor(f1B))%>%
+  ggplot(aes(x = f1A, y = welfare_total, color = f1B))+
+  geom_line(linewidth = 1.1)+
+  theme_bw()+
+  ggtitle('Welfare as a function of fencing in A and B')
+```
+
+```{r, illustration2}
+
+data = data.frame(f1 = seq(0,40, by = .5))%>%
+  mutate(e1A = e1A(f1, p, p - 2, p - 1, base, k), 
+         e1B = e1B(f1, p, p - 2, p - 1, base, k))%>%
+  pivot_longer(cols = - f1, 
+               values_to = 'values', 
+               names_to  = 'names')
+data %>% 
+  ggplot(aes(x = f1, y = values))+
+  facet_wrap(~names)+
+  geom_line(linewidth = 1.1)+
+  geom_hline(yintercept = X2, color = 'grey55', linewidth = 1.1)+
+  geom_hline(yintercept = (delta * alpha1)^(1/( 1 - alpha1)), color = 'red', linetype = 'dotted', linewidth = 1)+
+  theme_bw()
+```
+
+
+## Investigating the Nash equilibrium
+
+First order condition on fencing in Nash equilibrium is difficult to interpret. 
+
+
+
+Candidate set for NE is $S = \{ 0, \infty \}$. Check which is equilibrium which is not?
+
+
+
+Examine the dominant strategies : this graph seems to show that firms will always choose a large $f$, because profits increase with it. Indeed, it entails more resource retention, and therefore, more profit over time. I guess the possibility of $f^{NE}=0$ must show a minimum more than a maximum (need to check second order conditions). Therefore, the Nash Equilibrium is a race to the bottom.
+
+Weird to see that welfare of A increases with fencing in B: should not be the case, need to check that out. Indeed, the welfare of A should be decreasing with fencing in B, as less resources stay in A. Or it can be that with fencing in B, the optimal escapement is non zero, and therefore there is "more" resource flow from B to A if there is a little fencing, because the escapement is non zero. 
+```{r, NE2}
+
+data = expand.grid(f1 = seq(0,20, by =.5),
+                   f2 = seq(0,20, by = .5))
+
+data$escA = NA
+data$escB = NA
+data$dA = NA
+data$welfare_NE_A = NA
+data$welfare_NE_B = NA
+for(i in 1:nrow(data)){
+  data[i, 'escA'] = escapement_NE_A(i, base, k)
+  data[i, 'escB'] = escapement_NE_B(i, base, k)
+  data[i, 'dA'] = dispersal(i, base, k)
+  data[i, 'welfare_NE_A'] = welfare_NE_A(data[i,1], data[i,2], base, k, base, k)
+  data[i, 'welfare_NE_B'] = welfare_NE_B(data[i,2], data[i,1], base, k, base, k)
+}
+
+
+
+data %>% 
+  subset(f2 %in% c(0, 5))%>%
+  mutate(f2 = as.factor(f2))%>%
+  ggplot(aes(x = f1, y = welfare_NE_A, color = f2))+
+  geom_line()
+
+#welfare_NE_A(seq(0,20), rep(0,20), base, k, base, k)
+
+```
+
+Understand the results : 
+```{r, NE3}
+escapement_NE_A(0,0,1)
+escapement_NE_A(1000,0,1)
+
+welfare_NE_A(0,0,0,1,0,1)
+
+
+```
+
+## Developing a story line
+In this setting, assume a landscape with an observed sink source dynamic, from $A$ to $B$. In this case, let $\mathbf{D}_0$ be
+
+
+
+The status quo situation is the Nash Equilibrium: 
+
+
+
+Now assume fences can be purchased, and land can be fenced. 
+
+
+
+### Other illustration
+Show welfare depending on both fences in the optimal case, and see when liberalizing fences is wlefare increasing?
+
+```{r, illustration 4}
+
+# Generate potential combinations of fences
+input_ = expand.grid(seq(0,8, by =.01), seq(0,8, by = .01))
+colnames(input_) = c('f1A', 'f1B')
+
+input_$dispersalA = exp(- input_$f1A)
+input_$dispersalB = exp(- input_$f1B)
+input_$welfare_simple_A = welfare_simple_A(input_$f1A, p, p - 1.5, p - 1, base, k)
+input_$welfare_simple_B = welfare_simple_B(input_$f1B, p, p - 1.5, p - 1, base, k)
+input_$welfare_total = input_$welfare_simple_A + input_$welfare_simple_B
+
+input_$label = NA
+input_[which(input_$f1A == max(input_$f1A) & input_$f1B ==max(input_$f1B)), 'label'] = 'NE'
+input_[which(input_$f1A == round(fA0,1) & input_$f1B == round(fB0, 1)), 'label'] = 'Baseline'
+input_[which(input_$f1A == max(input_$f1A) & input_$f1B ==min(input_$f1B)), 'label'] = 'Optimum'
+
+baseline_ = input_[which(input_$f1A == round(fA0,1) & input_$f1B == round(fB0, 1)), 'welfare_total']
+input_$welfare_relative = (input_$welfare_total/baseline_ - 1)*100
+
+
+plo <- ggplot(data = input_, aes(x = f1A, y = f1B, fill = welfare_relative)) +
+  geom_tile() +
+  scale_fill_gradient2(low ="red",
+                       mid = 'white',
+                       high ="blue")
+
+plo + geom_point(data = subset(input_, label %in% c('NE', 'Baseline','Optimum')),
+               aes(x = f1A, y = f1B, shape = label, fill = welfare_relative), 
+               size = 3, 
+               color = 'gray22')+
+  theme_minimal()+
+  ylab('Fences in B')+
+  xlab('Fences in A')+
+  labs(fill = 'Relative welfare change\n when fencing is introduced', 
+       shape = ' ')
+
+```
+
+
+## A less simple model : variable costs and heterogeneity
+
+In this part, the marginal benefit of harvesting is no longer constant : 
+
+\begin{equation}
+\Pi_{it} = p(X_{it} - e_{it}) - \int_{e_{it}}^{X_{it}} c_i(s) ds
+\end{equation}
+
+For the sake of the demonstration, we can take $c_i(s) = 3 c_i s^2$, hence : 
+
+$$
+\int_{e_{it}}^{X_{it}} c_i(s) ds = c_i\left(X_{it}^3 - e_{it}^3\right)
+$$
+
+
+
+

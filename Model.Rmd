@@ -1,0 +1,328 @@
+---
+title: "Dispersal"
+author: "Jean"
+date: "2023-11-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(dplyr)
+library(magrittr)
+library(tidyr)
+library(ggplot2)
+library(reshape2)
+library(tinytable)
+library(igraph)
+```
+
+## Parameters
+
+```{r, Params}
+# Initial stock
+X1 = .9
+X2 = .9
+# Growth
+alpha1 = .85
+alpha2 = .85
+
+# Relative fencing efficiencies
+beta1 = .8
+beta2 = .8
+base = 0
+
+#Scaling for dispersal
+k = 10
+
+# Discounting
+delta = .99
+
+# Econ
+p = 10
+cA = 2
+cB = 9
+
+```
+
+## Function
+
+```{r, Functions}
+
+dispersal = function(i,
+                     j,
+                     fi,
+                     fj,
+                     k. = k,
+                     base. = base){
+  if(j == 2){
+    y = exp(- (base. + fi + beta1*fj)/k.)
+  }else if(j==1){
+    y = exp( - (base.+ fj + beta2*fi)/k.)
+  }
+  return(y)
+}
+
+partial_dispersal = function(i,
+                             j,
+                             fi,
+                             fj,
+                             type,
+                             k. = k){
+  if(!(type %in% c('own', 'cross'))){
+    stop("derivative type is not 'own' nor 'cross'" )
+  }else if(type == 'own'){
+    y = -1/k * dispersal(i,j,fi,fj,k.)
+  }else if(type == 'cross'){
+    if(j == 1){
+      y = -beta2/k * dispersal(i,j,fi,fj,k.)
+    }else if(j==2){
+      y = - beta1/k * dispersal(i,j,fi,fj,k.)
+    }
+  }
+  return(y)
+}
+
+growth = function(x,alpha){
+  return(x^ alpha)
+}
+
+marginal_growth = function(x,alpha){
+  return(alpha * x^(alpha-1))
+}
+
+```
+
+## FOCs for optimal solution
+
+```{r, FOC}
+
+e1 = seq(0,1,0.01)
+
+data = data.frame(e1)%>%
+  mutate(growth = growth(e1, alpha1))%>%
+  mutate(marginal_growth = marginal_growth(e1, alpha1))
+
+data %>%
+  ggplot(aes(x = e1, y = marginal_growth))+
+  geom_point()
+
+# Optimal ei
+
+e1 = function(f1,f2){
+  y = 1/(delta*alpha1)*((p-cA)/((1 - dispersal(1,2,f1,f2))* (p-cA) + (p-cB) * dispersal(2,1,f1,f2)))
+  y = y^(1/(alpha1 - 1))
+  z = min(y,X1)
+  return(z)
+} 
+
+
+e2 = function(f1,f2){
+  y = 1/(delta*alpha2)*((p-cB)/((1 - dispersal(2,1,f1,f2))*(p-cB) + dispersal(1,2,f1,f2)*(p-cA)))
+  y = y^(1/(alpha2 - 1))
+  z = min(y, X2)
+  return(z)
+}
+
+
+# Optimality for fencing? 
+
+bound = cB - cA
+
+FOCA = function(f1,f2){
+  y  = partial_dispersal(2,1,f1,f2,'cross') *  growth(e2(f1,f2), alpha2) - partial_dispersal(1,2,f1,f2, 'own') * growth(e1(f1,f2),alpha1)
+  return(y)
+}
+
+FOCB = function(f1,f2){
+  y  = partial_dispersal(2,1,f1,f2,'own') *  growth(e2(f1,f2), alpha2) - partial_dispersal(1,2,f1,f2,'cross')*growth(e1(f1,f2),alpha1)
+  return(y)
+}
+```
+
+
+## Analysis
+
+```{r, optimal escapement}
+
+input_ = expand.grid(seq(0,50), seq(0,50))
+result_ = data.frame(matrix(ncol = 2, nrow = 0))
+
+for(row in 1:nrow(input_)){
+  condA = FOCA(input_[row,1], input_[row,2]) * bound
+  condB = FOCB(input_[row,1], input_[row,2]) * bound
+  result_[row,] = c(condA, condB)
+}
+colnames(result_) = c('condA', 'condB')
+result_ = cbind(input_,result_)
+
+result_ = result_ %>%
+  pivot_longer(-c('Var1', 'Var2'), 
+               names_to = 'names', 
+               values_to = 'values')
+
+result_ %>%
+  filter(Var2 %in% c(0, 7,8, 20, 50))%>%
+  filter(names %in% c("condA", "condB"))%>%
+  filter(Var1 < 15)%>%
+  mutate(Var2 = as.factor(Var2))%>%
+  ggplot(aes( x = Var1, color = names, y = values))+
+  geom_point()+
+  geom_hline(aes(yintercept = 0))+
+  facet_grid(~Var2)
+```
+
+Results seem to point to $f_1^B = 0$ and $f_1^A \to \infty$.
+
+```{r, welfare}
+
+welfare = function(f1,f2){
+  y = (p - cA) * (X1 - e1(f1,f2)) + (p-cB)* (X2 - e2(f1,f2))
+  z = (p - cA) * ((1 - dispersal(1,2,f1,f2)) * growth(e1(f1,f2), alpha1) +
+                   dispersal(2,1,f1,f2) * growth(e2(f1,f2), alpha2)) + 
+      (p-  cB) * ((1 - dispersal(2,1,f1,f2)) * growth(e2(f1,f2),alpha2) +
+                  dispersal(1,2,f1,f2) * growth(e1(f1,f2), alpha1))
+  return(y + delta * z)
+}
+
+
+model = function(f1, f2, scenario, rounder = 4){
+   y = c(scenario, round(dispersal(1,2,f1,f2), rounder), round(dispersal(2,1,f1,f2),rounder), round(e1(f1,f2),rounder),
+         round(e2(f1,f2),rounder), round(marginal_growth(e1(f1,f2), alpha1),rounder), 
+         round(marginal_growth(e2(f1,f2), alpha2),rounder), 
+         round(1/delta,rounder), 
+         round(welfare(f1,f2),rounder))
+
+  names(y) = c('Scenario', 'Dispersal from 1 to 2', 'Dispersal from 2 to 1', 'Optimal escapement in 1', 'Optimal escapement in 2', 'Marginal growth in 1', 'Marginal growth in 2', '1/delta', "Welfare")
+  return(y)
+}
+
+```
+
+
+## Analysis of results with no inflow reduction
+
+Assume the inflow is not reduced, eg $\frac{\partial d_{ij}}{\partial f_j}=0$. Start from a fully fenced equilibrium, where everyone is fencing their land:
+
+```{r, full fence}
+# Relative fencing efficiencies
+beta1 = 0
+beta2 = 0
+base = 0
+# Map the connectivity flows: 
+view_network = function(f1, f2, X1. = X1, X2. = X2){
+  g = graph(edges = c(1,2, 2,1, 1,1, 2,2), directed = T)
+  
+  V(g)$name <- c("Node 1", "Node 2")
+  
+  # Set node sizes based on the input radii
+  V(g)$size <- c(radius1, radius2)*20   # Multiplying by a factor for better visibility
+  
+  # Set edge (arrow) width
+  E(g)$width <- c(dispersal(1,2,f1,f2),dispersal(2,1,f1,f2), 1 - dispersal(1,2,f1,f2),1 - dispersal(2,1,f1,f2))
+  
+  layout = layount_nicely(g)
+  # Plot the graph
+  plot(g, 
+       layout=layout,  # Layout to position nodes in a circle
+       vertex.shape="circle",  # Nodes are shaped as circles
+       vertex.label=V(g)$name,  # Display node names
+       edge.arrow.size = max(line_width)/5,
+       edge.curved=0.5)  # Slightly curve the edges for better visibility
+}
+
+
+
+view_connectivity = function(f1,f2){
+  d_ = matrix(nrow = 2, 
+              ncol = 2)
+  d_[1,1] = 1 - dispersal(1, 2, f1, f2)
+  d_[1,2] = dispersal(1, 2, f1, f2)
+  d_[2,1] = dispersal(2, 1, f1, f2)
+  d_[2,2] = 1 - dispersal(2, 1, f1, f2)
+  
+  ggplot(melt(d_), aes(x = Var2, y = Var1, fill = value)) + 
+    geom_tile() + 
+    scale_fill_gradient(low = "gray95", high = "indianred") + # Define the gradient fill
+    geom_text(aes(label = round(value,3)))+
+    labs(x = "",y = "") +
+    theme_bw()+
+    theme(
+    # Remove axis titles
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    # Remove axis text labels
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    # Remove axis ticks
+    axis.ticks = element_blank(),
+    # Remove panel background, border, and grid lines
+    panel.background = element_blank(),
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Set color white : 
+    text = element_text(color = "white"),
+    # Remove legend
+    legend.position = "none"
+    )
+}
+view_connectivity(100,100)
+
+```
+
+This is likely one of the Nash equilibria. In this setting, the model yields:
+
+```{r, welfare with fences in A}
+tt(as.data.frame(t(model(100,100, 'Nash equilibrium'))))
+
+```
+The key fact here is to notice that the Nash equilibrium solves the spatial externality, and that the marginal growth rate in each patch is equal to $1/\delta$. Welfare however, could be larger!
+
+
+```{r, welfare analysis}
+# Reduced fencing : 
+
+f1 = .4
+f2 = .8
+view_connectivity(f1, f2)
+dispersal(1,2,f1,f2)
+dispersal(2,1, f1, f2)
+d_ = matrix(nrow = 2, 
+            ncol = 2)
+d_[1,1] = 1 - dispersal(1,2,f1,f2)
+d_[1,2] = dispersal(1,2,f1,f2)
+d_[2,1] = dispersal(2,1,f1, f2)
+d_[2,2] = 1 - dispersal(2,1,f1,f2)
+print(d_)
+```
+
+In this situation: 
+
+```{r, welfare source sink}
+model(f1,f2, 'Low value is sink')
+```
+
+In this situation : 
+
+* Optimal escapement in patch $B$ is constrained by initial size : no harvest, to allow for tomorrow to have a better money in $A$. 
+
+* Harvest a lot today in $A$ to keep the resource. 
+
+What one may be attracted to do in this case, given that fencing only reduces outflow but has no impact on inflow (`r print(beta1)`) is to retain more resource in $A$ (and possibly, to reverse the sink source dynamics) : 
+
+# Investigation
+
+```{r, checker}
+
+input_ = expand.grid(seq(1,50), seq(1,50))
+results = data.frame(matrix(ncol = 5))
+
+for(i in 1:nrow(input_)){
+  results[i,] = c(input_[i,1], input_[i,2], dispersal(1,2, input_[i,1],input_[i,2]), dispersal(2,1,input_[i,1],input_[i,2]), welfare(input_[i,1], input_[i,2]))
+}
+
+max(results$X5)
+
+e1(0,0)
+1/(delta*alpha1)*(p-cA)/(p-cB)
+```
